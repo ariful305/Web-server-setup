@@ -1,54 +1,65 @@
 #!/bin/bash
-echo "=== MEMBER 1: System Prep + Health Check + Auto Clean ==="
+echo "=== MEMBER 1: Apache + SSL + Modules ==="
 
-echo "[1] Creating project structure..."
-mkdir -p ~/webserver_lab/{config,public,logs,scripts,backups,runtime,temp,report}
+echo "[1] Installing Apache..."
+sudo apt update
+sudo apt install -y apache2 apache2-utils openssl
 
-echo "[2] System hardware info..."
-CPU=$(lscpu | grep "Model name")
-MEM=$(free -h | grep Mem)
-DISK=$(df -h / | tail -1)
+echo "[2] Adding hostname to /etc/hosts..."
+echo "127.0.0.1 group.local" | sudo tee -a /etc/hosts
 
-echo "[3] Checking network connectivity..."
-ping -c 2 google.com &> /dev/null && echo "Internet OK" || echo "No Internet!"
-nslookup google.com &> /dev/null && echo "DNS OK" || echo "DNS FAIL"
+echo "[3] Enabling Apache modules..."
+sudo a2enmod rewrite
+sudo a2enmod ssl
+sudo a2enmod headers
+sudo a2enmod expires
 
-echo "[4] Installing dependencies..."
-sudo apt install -y curl git net-tools traceroute
+echo "[4] Creating SSL certificate..."
+sudo mkdir -p /etc/apache2/ssl
+sudo openssl req -x509 -nodes -days 365 \
+    -subj "/CN=group.local" \
+    -newkey rsa:2048 \
+    -keyout /etc/apache2/ssl/group.key \
+    -out /etc/apache2/ssl/group.crt
 
-echo "[5] Creating HTML files..."
-cd ~/webserver_lab/public
-echo "<h1>Home Page</h1>" > home.html
-echo "<h1>About</h1>" > about.html
-echo "<h1>Contact</h1>" > contact.html
+echo "[5] Creating secure HTTPS virtual host..."
+sudo tee /etc/apache2/sites-available/group_ssl.conf > /dev/null << EOF
+<VirtualHost *:443>
+    ServerName group.local
+    DocumentRoot /var/www/group_site
 
-echo "[6] Creating environment setup script..."
-cat << 'EOF' > ~/webserver_lab/scripts/setup_env.sh
-#!/bin/bash
-mkdir -p ~/webserver_lab/runtime
-cp ~/webserver_lab/public/*.html ~/webserver_lab/runtime/
+    SSLEngine on
+    SSLCertificateFile /etc/apache2/ssl/group.crt
+    SSLCertificateKeyFile /etc/apache2/ssl/group.key
+
+    <Directory /var/www/group_site>
+        AllowOverride All
+    </Directory>
+
+    Header always set X-Frame-Options "DENY"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Strict-Transport-Security "max-age=63072000"
+
+    ErrorLog \${APACHE_LOG_DIR}/ssl_error.log
+    CustomLog \${APACHE_LOG_DIR}/ssl_access.log combined
+</VirtualHost>
 EOF
-chmod +x ~/webserver_lab/scripts/setup_env.sh
-~/webserver_lab/scripts/setup_env.sh
 
-echo "[7] Creating auto-clean script..."
-cat << 'EOF' > ~/webserver_lab/scripts/cleanup.sh
-#!/bin/bash
-rm -rf ~/webserver_lab/temp/*
-echo "Temporary files cleaned!"
-EOF
-chmod +x ~/webserver_lab/scripts/cleanup.sh
+sudo a2ensite group_ssl.conf
 
-echo "[8] Generating system_report.txt..."
-cat << EOF > ~/webserver_lab/report/system_report.txt
-System Report:
---------------
-CPU: $CPU
-Memory: $MEM
-Disk: $DISK
-IP Address: $(hostname -I)
-Kernel: $(uname -r)
+echo "[6] Redirect HTTP -> HTTPS..."
+sudo tee /etc/apache2/sites-available/redirect_http.conf > /dev/null << EOF
+<VirtualHost *:80>
+    ServerName group.local
+    Redirect / https://group.local/
+</VirtualHost>
 EOF
+
+sudo a2ensite redirect_http.conf
+
+echo "[7] Restarting Apache after config test..."
+sudo apachectl configtest && sudo systemctl restart apache2
 
 echo "=== MEMBER 1: COMPLETED ==="
 

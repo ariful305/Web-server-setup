@@ -1,65 +1,58 @@
 #!/bin/bash
-echo "=== MEMBER 2: Apache + SSL + Modules ==="
+echo "=== UBUNTU APACHE AUTO SITE SETUP ==="
 
-echo "[1] Installing Apache..."
-sudo apt update
-sudo apt install -y apache2 apache2-utils openssl
+echo -n "Enter your site name (example: mysite.local): "
+read SITENAME
 
-echo "[2] Adding hostname to /etc/hosts..."
-echo "127.0.0.1 group.local" | sudo tee -a /etc/hosts
+SITE_DIR="/var/www/$SITENAME"
 
-echo "[3] Enabling Apache modules..."
-sudo a2enmod rewrite
-sudo a2enmod ssl
-sudo a2enmod headers
-sudo a2enmod expires
+sudo mkdir -p $SITE_DIR
+sudo chown -R $USER:$USER $SITE_DIR
+sudo chmod -R 755 $SITE_DIR
 
-echo "[4] Creating SSL certificate..."
-sudo mkdir -p /etc/apache2/ssl
-sudo openssl req -x509 -nodes -days 365 \
-    -subj "/CN=group.local" \
-    -newkey rsa:2048 \
-    -keyout /etc/apache2/ssl/group.key \
-    -out /etc/apache2/ssl/group.crt
-
-echo "[5] Creating secure HTTPS virtual host..."
-sudo tee /etc/apache2/sites-available/group_ssl.conf > /dev/null << EOF
-<VirtualHost *:443>
-    ServerName group.local
-    DocumentRoot /var/www/group_site
-
-    SSLEngine on
-    SSLCertificateFile /etc/apache2/ssl/group.crt
-    SSLCertificateKeyFile /etc/apache2/ssl/group.key
-
-    <Directory /var/www/group_site>
-        AllowOverride All
-    </Directory>
-
-    Header always set X-Frame-Options "DENY"
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set Strict-Transport-Security "max-age=63072000"
-
-    ErrorLog \${APACHE_LOG_DIR}/ssl_error.log
-    CustomLog \${APACHE_LOG_DIR}/ssl_access.log combined
-</VirtualHost>
+cat <<EOF > $SITE_DIR/index.html
+<h1>Apache Site Working: $SITENAME</h1>
+<p>Ubuntu Auto Setup Successful!</p>
 EOF
 
-sudo a2ensite group_ssl.conf
-
-echo "[6] Redirect HTTP -> HTTPS..."
-sudo tee /etc/apache2/sites-available/redirect_http.conf > /dev/null << EOF
+VHOST="/etc/apache2/sites-available/$SITENAME.conf"
+sudo tee $VHOST > /dev/null <<EOF
 <VirtualHost *:80>
-    ServerName group.local
-    Redirect / https://group.local/
+    ServerName $SITENAME
+    DocumentRoot $SITE_DIR
+    <Directory $SITE_DIR>
+        AllowOverride All
+        Require all granted
+    </Directory>
 </VirtualHost>
 EOF
 
-sudo a2ensite redirect_http.conf
+sudo a2ensite $SITENAME.conf
+sudo a2dissite 000-default.conf
+sudo systemctl reload apache2
 
-echo "[7] Restarting Apache after config test..."
-sudo apachectl configtest && sudo systemctl restart apache2
+echo "127.0.0.1   $SITENAME" | sudo tee -a /etc/hosts
 
-echo "=== MEMBER 2: COMPLETED ==="
+echo "Open: http://$SITENAME"
+echo "=== AUTO SITE SETUP COMPLETE ==="
 
+
+if [ ! -d "/var/www" ]; then
+    echo "[!] /var/www does not exist. Creating it..."
+    sudo mkdir -p /var/www
+    sudo chmod 755 /var/www
+fi
+
+
+if [ -L "$HOME/www" ]; then
+    echo "[1] Removing old www link..."
+    rm -f "$HOME/www"
+fi
+
+echo "[2] Creating www shortcut in home directory..."
+ln -s /var/www ~/www
+
+echo "[3] Verifying link..."
+ls -l ~/www
+
+echo "=== MEMBER 2 COMPLETE: You can now access www in your Home folder ==="
