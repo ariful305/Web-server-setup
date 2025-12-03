@@ -6,6 +6,6 @@ bash member2_setup.sh
 bash member3_setup.sh
 bash member4_setup.sh
 bash member5_setup.sh   
-bash member6_setup.sh 
+
 echo "=== ALL TASKS COMPLETED ==="
 

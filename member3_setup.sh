@@ -1,161 +1,98 @@
 #!/bin/bash
+set -euo pipefail
+
+REPORT_DIR="$HOME/security_reports"
+REPORT="$REPORT_DIR/member3_security_report_$(date +%F_%H-%M).txt"
+SSHD="/etc/ssh/sshd_config"
+
+BLUE="\e[34m"; RESET="\e[0m"
+
+log() {
+    printf "%b[SEC]%b %s\n" "$BLUE" "$RESET" "$*"
+}
+
+backup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        sudo cp "$file" "${file}.bak_$(date +%F_%H-%M)" || true
+    fi
+}
+
 echo "=== MEMBER 3: SERVER SECURITY + FIREWALL + SSH HARDENING ==="
 
-########################################
-# 1. Install Security Tools
-########################################
-echo "[1] Installing security packages..."
-sudo apt update
+log "Creating report directory at $REPORT_DIR ..."
+mkdir -p "$REPORT_DIR"
+
+log "Installing security packages..."
+sudo apt update -y
 sudo apt install -y ufw fail2ban unattended-upgrades apt-listchanges
 
-########################################
-# 2. Configure UFW Firewall
-########################################
-echo "[2] Setting up UFW Firewall..."
-
-# Reset firewall to default
+log "Configuring UFW firewall (reset + default deny incoming)..."
 sudo ufw --force reset
-
-# Default rules
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
-# Allow required services
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Limit SSH login attempts
-sudo ufw limit 22/tcp
+# Allow SSH & Apache (http/https)
+log "Allowing SSH and Apache Full through firewall..."
+for rule in "OpenSSH" "Apache Full"; do
+    sudo ufw allow "$rule" >/dev/null 2>&1 || true
+done
 
 sudo ufw --force enable
 
-echo "UFW Status:"
-sudo ufw status verbose
+log "Hardening SSH configuration..."
+backup_file "$SSHD"
 
-########################################
-# 3. SSH Hardening
-########################################
-echo "[3] Hardening SSH settings..."
+# Use parameter expansion + sed via a loop for multiple settings
+declare -A SSH_SETTINGS=(
+    ["PermitRootLogin"]="no"
+    ["PasswordAuthentication"]="no"
+    ["PermitEmptyPasswords"]="no"
+    ["LoginGraceTime"]="30"
+)
 
-SSHD="/etc/ssh/sshd_config"
+for key in "${!SSH_SETTINGS[@]}"; do
+    val="${SSH_SETTINGS[$key]}"
+    if grep -qE "^#?\s*${key}" "$SSHD"; then
+        sudo sed -i "s|^#\?\s*${key}.*|${key} ${val}|" "$SSHD"
+    else
+        echo "${key} ${val}" | sudo tee -a "$SSHD" >/dev/null
+    fi
+done
 
-# Backup original SSH config
-if [ ! -f "${SSHD}.backup_member3" ]; then
-    sudo cp "$SSHD" "${SSHD}.backup_member3"
-fi
+sudo systemctl reload sshd || sudo systemctl restart ssh || true
 
-# Disable root login
-sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' $SSHD
+log "Configuring basic Fail2ban for sshd..."
+JAIL_LOCAL="/etc/fail2ban/jail.d/ssh-hardening.conf"
+sudo mkdir -p /etc/fail2ban/jail.d
 
-# Disable password authentication (keys only)
-sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' $SSHD
-
-# Disable empty passwords
-sudo sed -i 's/^#\?PermitEmptyPasswords.*/PermitEmptyPasswords no/' $SSHD
-
-# Shorten login grace time
-sudo sed -i 's/^#\?LoginGraceTime.*/LoginGraceTime 30/' $SSHD
-
-# Apply changes
-sudo systemctl restart ssh || sudo systemctl restart sshd
-
-########################################
-# 4. Basic Kernel Hardening (sysctl)
-########################################
-echo "[4] Applying kernel hardening rules..."
-
-SYSCTL="/etc/sysctl.d/99-security.conf"
-
-sudo tee $SYSCTL > /dev/null << 'EOF'
-net.ipv4.tcp_syncookies = 1
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.icmp_ignore_bogus_error_responses = 1
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.default.accept_redirects = 0
-net.ipv4.conf.all.accept_source_route = 0
-net.ipv4.conf.default.accept_source_route = 0
-net.ipv4.conf.all.log_martians = 1
-EOF
-
-sudo sysctl --system
-
-########################################
-# 5. Secure Web Directory Permissions
-########################################
-echo "[5] Securing web directory..."
-
-WEB="/var/www/group_site"
-
-if [ -d "$WEB" ]; then
-    sudo chown -R $USER:$USER "$WEB"
-    sudo find "$WEB" -type d -exec chmod 755 {} \;
-    sudo find "$WEB" -type f -exec chmod 644 {} \;
-else
-    echo "Web directory not found: $WEB"
-fi
-
-########################################
-# 6. Fail2ban Configuration
-########################################
-echo "[6] Configuring Fail2ban..."
-
-JAIL="/etc/fail2ban/jail.local"
-
-sudo tee $JAIL > /dev/null << 'EOF'
-[DEFAULT]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-
+sudo tee "$JAIL_LOCAL" >/dev/null <<EOF
 [sshd]
-enabled  = true
-port     = ssh
-logpath  = /var/log/auth.log
+enabled = true
+port    = ssh
+filter  = sshd
+logpath = /var/log/auth.log
+maxretry = 5
+bantime = 3600
 EOF
 
-sudo systemctl restart fail2ban
 sudo systemctl enable fail2ban
+sudo systemctl restart fail2ban
 
-########################################
-# 7. Automatic Security Updates
-########################################
-echo "[7] Enabling automatic updates..."
-
-AUTO="/etc/apt/apt.conf.d/20auto-upgrades"
-
-sudo tee $AUTO > /dev/null << 'EOF'
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-EOF
-
-sudo dpkg-reconfigure -f noninteractive unattended-upgrades
-
-########################################
-# 8. Generate Security Report
-########################################
-echo "[8] Generating security report..."
-
-REPORT_DIR=~/webserver_lab/report
-mkdir -p "$REPORT_DIR"
-
-REPORT="$REPORT_DIR/security_report.txt"
-
+log "Generating security report at $REPORT ..."
 {
-echo "Security Report - Member 3"
-echo "=========================="
-date
-echo
-echo "--- Firewall Status ---"
-sudo ufw status verbose
-echo
-echo "--- SSH Security Settings ---"
-grep -E 'PermitRootLogin|PasswordAuthentication|PermitEmptyPasswords|LoginGraceTime' $SSHD
-echo
-echo "--- Fail2ban Status ---"
-sudo fail2ban-client status sshd 2>/dev/null || echo "Fail2ban not active"
+    echo "=== SERVER SECURITY REPORT (MEMBER 3) ==="
+    echo "Generated: $(date)"
+    echo
+    echo "--- Firewall Status ---"
+    sudo ufw status verbose
+    echo
+    echo "--- SSH Security Settings ---"
+    grep -E 'PermitRootLogin|PasswordAuthentication|PermitEmptyPasswords|LoginGraceTime' "$SSHD" || echo "SSH keys not found."
+    echo
+    echo "--- Fail2ban Status ---"
+    sudo fail2ban-client status sshd 2>/dev/null || echo "Fail2ban sshd jail not active."
 } > "$REPORT"
 
-echo "Report saved to $REPORT"
+log "Report saved to $REPORT"
 echo "=== MEMBER 3 COMPLETE ==="
-
