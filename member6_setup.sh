@@ -36,3 +36,23 @@ echo "127.0.0.1   $SITENAME" | sudo tee -a /etc/hosts
 echo "Open: http://$SITENAME"
 echo "=== AUTO SITE SETUP COMPLETE ==="
 
+
+if [ ! -d "/var/www" ]; then
+    echo "[!] /var/www does not exist. Creating it..."
+    sudo mkdir -p /var/www
+    sudo chmod 755 /var/www
+fi
+
+
+if [ -L "$HOME/www" ]; then
+    echo "[1] Removing old www link..."
+    rm -f "$HOME/www"
+fi
+
+echo "[2] Creating www shortcut in home directory..."
+ln -s /var/www ~/www
+
+echo "[3] Verifying link..."
+ls -l ~/www
+
+echo "=== MEMBER 6 COMPLETE: You can now access www in your Home folder ==="
