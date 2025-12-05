@@ -210,16 +210,3 @@ bash ~/webserver_lab/backups/<sitename>/restore.sh
 * OpenSSL — [https://www.openssl.org/](https://www.openssl.org/)
 * Ubuntu Manpages — [https://manpages.ubuntu.com/](https://manpages.ubuntu.com/)
 
----
-
-If you want, I can also:
-    
-✅ Add badges (build, version, license)
-
-✅ Format for GitHub Pages
-
-✅ Add screenshots or diagrams
-
-✅ Create a PDF version of this README
-
-Just tell me!
