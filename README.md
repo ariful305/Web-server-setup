@@ -1,7 +1,3 @@
-Here is a complete **GitHub-ready README.md** for your project, including all member scripts, instructions, features, how to run, architecture, and citations for the scripts.
-
----
-
 # 🚀 **Ubuntu Web Server Automation – Group Project**
 
 Automated Apache Setup, Security, Monitoring & Backup
